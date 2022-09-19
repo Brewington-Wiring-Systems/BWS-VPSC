@@ -9,7 +9,6 @@
 #include "Arduino.h"
 #include <SPI.h> 
  
-//set switch value for speed changes (while 1-4 or 5) 
 //set reoccuring/ rolling data chage on "alive message" to keep pump activley listening
 // set keep alive frame every 30th of speed frame
 // Keep pump Listening 
