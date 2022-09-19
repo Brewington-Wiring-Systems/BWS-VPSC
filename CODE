@@ -1,0 +1,947 @@
+// 5/25/2022
+//////**********Written by WirenutCJ7 (aka Benjamin Brewington) with info from Diyelectric car forums
+//https://www.diyelectriccar.com/threads/volvo-electro-hydraulic-power-steering.44828/#post-180484*********
+///////*********IN PARTNERSHIP WITH BREWINGTON WIRING SYSTEMS LLC********
+
+
+#include <mcp2515.h>
+#include "TinyGPS++.h"
+#include "Arduino.h"
+#include <SPI.h> 
+ 
+//set switch value for speed changes (while 1-4 or 5) 
+//set reoccuring/ rolling data chage on "alive message" to keep pump activley listening
+// set keep alive frame every 30th of speed frame
+// Keep pump Listening 
+//0x1ae0092c = { 0x00| 0x00, 0x22, 0xe0, 0x41, 0x90, 0x00, 0x00 }
+//             { 0x00| 0x40, 0x80, 0xC0 
+
+//********************************************************************************
+//SPEED                                             |0-99 value 0=100%
+//0x02104136 = { 0xbb, 0x00, 0x3f, 0xff, 0x06, 0xe0,|0x00, 0x00 }
+
+// car stopped is 0
+// car moving fast is 99
+// 
+
+//*******************************************************
+static const uint32_t GPSBaud = 9600;
+TinyGPSPlus gps;
+
+int SpeedVal;
+int Alive = 1;
+int Freq = 0;
+int Pval = 0;
+int Pot = 0;
+int RA1;
+//Pot Range values after division. Leave these alone unless you are removing POT for manual speed adjustment  
+const int sensorMin = 0;     
+const int sensorMax = 95; 
+//GPS Range Values   Modify these numbers to set the range for how fast the unit will change assist based on speed.
+const int SpeedMin = 0;
+const int SpeedMax = 180;
+
+//Listen Frames
+struct can_frame canMsg1;
+struct can_frame canMsg2;
+struct can_frame canMsg3;
+struct can_frame canMsg4;
+// Speed Frames
+struct can_frame canMsg5;
+struct can_frame canMsg6;
+struct can_frame canMsg7;
+struct can_frame canMsg8;
+struct can_frame canMsg9;
+struct can_frame canMsg10;
+struct can_frame canMsg11;
+struct can_frame canMsg12;
+struct can_frame canMsg13;
+
+//MCP2515 mcp2515(53); // mega
+MCP2515 mcp2515(10); //promini
+
+void setup() {
+ //Keep Alive and listen message 1
+  canMsg1.can_id  = 0x1ae0092c | CAN_EFF_FLAG;
+  canMsg1.can_dlc = 8;
+  canMsg1.data[0] = 0xc0;
+  canMsg1.data[1] = 0x00;
+  canMsg1.data[2] = 0x22;
+  canMsg1.data[3] = 0xe0;
+  canMsg1.data[4] = 0x41;
+  canMsg1.data[5] = 0x90;
+  canMsg1.data[6] = 0x00;
+  canMsg1.data[7] = 0x00;
+
+//Keep alive and listen message 2
+  canMsg2.can_id  = 0x1ae0092c | CAN_EFF_FLAG;
+  canMsg2.can_dlc = 8;
+  canMsg2.data[0] = 0x00;
+  canMsg2.data[1] = 0x00;
+  canMsg2.data[2] = 0x22;
+  canMsg2.data[3] = 0xe0;
+  canMsg2.data[4] = 0x41;
+  canMsg2.data[5] = 0x90;
+  canMsg2.data[6] = 0x00;
+  canMsg2.data[7] = 0x00;
+//***********************************************************
+//Keep alive and listen message 3
+  canMsg3.can_id  = 0x1ae0092c | CAN_EFF_FLAG;
+  canMsg3.can_dlc = 8;
+  canMsg3.data[0] = 0x40;
+  canMsg3.data[1] = 0x00;
+  canMsg3.data[2] = 0x22;
+  canMsg3.data[3] = 0xe0;
+  canMsg3.data[4] = 0x41;
+  canMsg3.data[5] = 0x90;
+  canMsg3.data[6] = 0x00;
+  canMsg3.data[7] = 0x00;
+//***********************************************************
+//Keep alive and listen message 4
+  canMsg4.can_id  = 0x1ae0092c | CAN_EFF_FLAG;
+  canMsg4.can_dlc = 8;
+  canMsg4.data[0] = 0x80;
+  canMsg4.data[1] = 0x00;
+  canMsg4.data[2] = 0x22;
+  canMsg4.data[3] = 0xe0;
+  canMsg4.data[4] = 0x41;
+  canMsg4.data[5] = 0x90;
+  canMsg4.data[6] = 0x00;
+  canMsg4.data[7] = 0x00;
+//************************************************************///////////////////////////
+//SPEED 100%
+  canMsg5.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg5.can_dlc = 8;
+  canMsg5.data[0] = 0xbb;
+  canMsg5.data[1] = 0x00;
+  canMsg5.data[2] = 0x3f;
+  canMsg5.data[3] = 0xff;
+  canMsg5.data[4] = 0x06;
+  canMsg5.data[5] = 0xe0;
+  canMsg5.data[6] = 0x00;
+  canMsg5.data[7] = 0x00;
+//************************************************************
+//SPEED 90%
+  canMsg6.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg6.can_dlc = 8;
+  canMsg6.data[0] = 0xbb;
+  canMsg6.data[1] = 0x00;
+  canMsg6.data[2] = 0x3f;
+  canMsg6.data[3] = 0xff;
+  canMsg6.data[4] = 0x06;
+  canMsg6.data[5] = 0xe0;
+  canMsg6.data[6] = 0x9;
+  canMsg6.data[7] = 0x00;
+//**************************************************************
+//Speed 80%
+  canMsg7.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg7.can_dlc = 8;
+  canMsg7.data[0] = 0xbb;
+  canMsg7.data[1] = 0x00;
+  canMsg7.data[2] = 0x3f;
+  canMsg7.data[3] = 0xff;
+  canMsg7.data[4] = 0x06;
+  canMsg7.data[5] = 0xe0;
+  canMsg7.data[6] = 0x18;
+  canMsg7.data[7] = 0x00;
+//***************************************************************
+//Speed 70%
+  canMsg8.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg8.can_dlc = 8;
+  canMsg8.data[0] = 0xbb;
+  canMsg8.data[1] = 0x00;
+  canMsg8.data[2] = 0x3f;
+  canMsg8.data[3] = 0xff;
+  canMsg8.data[4] = 0x06;
+  canMsg8.data[5] = 0xe0;
+  canMsg8.data[6] = 0x27;
+  canMsg8.data[7] = 0x00;
+//****************************************************************
+//Speed 60%
+  canMsg9.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg9.can_dlc = 8;
+  canMsg9.data[0] = 0xbb;
+  canMsg9.data[1] = 0x00;
+  canMsg9.data[2] = 0x3f;
+  canMsg9.data[3] = 0xff;
+  canMsg9.data[4] = 0x06;
+  canMsg9.data[5] = 0xe0;
+  canMsg9.data[6] = 0x36;
+  canMsg9.data[7] = 0x00; 
+//****************************************************************
+//Speed 50% notice able change!
+  canMsg10.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg10.can_dlc = 8;
+  canMsg10.data[0] = 0xbb;
+  canMsg10.data[1] = 0x00;
+  canMsg10.data[2] = 0x3f;
+  canMsg10.data[3] = 0xff;
+  canMsg10.data[4] = 0x06;
+  canMsg10.data[5] = 0xe0;
+  canMsg10.data[6] = 0x45;
+  canMsg10.data[7] = 0x00;  
+//****************************************************************
+//Speed 40% Lowest noticed speed!!!!!!!!!!!!
+  canMsg11.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg11.can_dlc = 8;
+  canMsg11.data[0] = 0xbb;
+  canMsg11.data[1] = 0x00;
+  canMsg11.data[2] = 0x3f;
+  canMsg11.data[3] = 0xff;
+  canMsg11.data[4] = 0x06;
+  canMsg11.data[5] = 0xe0;
+  canMsg11.data[6] = 0x54;// lowest
+  canMsg11.data[7] = 0x00;
+//*****************************************************************
+//Speed 30%
+canMsg12.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg12.can_dlc = 8;
+  canMsg12.data[0] = 0xbb;
+  canMsg12.data[1] = 0x00;
+  canMsg12.data[2] = 0x3f;
+  canMsg12.data[3] = 0xff;
+  canMsg12.data[4] = 0x06;
+  canMsg12.data[5] = 0xe0;
+  canMsg12.data[6] = 0x56;
+  canMsg12.data[7] = 0x00;
+//*****************************************************************
+//Speed 20% Slowest stable speed!
+canMsg13.can_id  = 0x02104136 | CAN_EFF_FLAG;
+  canMsg13.can_dlc = 8;
+  canMsg13.data[0] = 0xbb;
+  canMsg13.data[1] = 0x00;
+  canMsg13.data[2] = 0x3f;
+  canMsg13.data[3] = 0xff;
+  canMsg13.data[4] = 0x06;
+  canMsg13.data[5] = 0xe0;
+  canMsg13.data[6] = 0x55;
+  canMsg13.data[7] = 0x00;  
+
+ 
+  while (!Serial);
+ // Serial.begin(115200); mega only, if using mega CHANGE ALL GPS COMMANDS TO "SERIAL1"
+  Serial.begin(9600);
+  
+  mcp2515.reset();
+  mcp2515.setBitrate(CAN_500KBPS, MCP_8MHZ);
+  mcp2515.setNormalMode();
+ pinMode(4, OUTPUT);
+ digitalWrite(4, LOW);
+ digitalWrite(4, HIGH);
+ delay(250);
+ 
+ mcp2515.sendMessage(&canMsg2);
+}
+
+void loop() {
+
+  int RA1 = analogRead(A0);
+ // Serial.println(RA1);
+  Pval = RA1 / 10.68;
+  //Serial.println(Pval);
+  int range = map(Pval, sensorMin, sensorMax, 0, 7); // WITH GPS! If running a non GPS board comment this line and uncomment the line below
+//int range = map(Pval, sensorMin, sensorMax, 0, 6); // WITHOUT GPS! If running a GPS board comment this line and uncomment the line above
+  
+  switch (range) {
+    case 0:    // Max RPM
+    Serial.print("RPM ");
+    Serial.println("100%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg5);
+  Freq += 1;
+  delay(5);
+      break;
+//*****************************************************************************      
+    case 1:    
+    Serial.print("RPM ");
+    Serial.println("90%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+  //Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg6);
+  Freq += 1;
+  delay(5);
+      break;
+//**************************************************************************************
+    case 2:    
+    Serial.print("RPM ");
+    Serial.println("80%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg7);
+  Freq += 1;
+  delay(5);
+      break;
+//****************************************************************************************************      
+    case 3:   
+    Serial.print("RPM ");
+    Serial.println("70%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg8);
+  Freq += 1;
+  delay(5);
+      break;
+//**********************************************************************************************      
+      case 4: 
+     Serial.print("RPM ");
+    Serial.println("60%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg9);
+  Freq += 1;
+  delay(5);
+      break;
+//***************************************************************************************      
+      case 5:
+    Serial.print("RPM ");
+    Serial.println("50%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg10);
+  Freq += 1;
+  delay(5);
+      break;
+//************************************************************************************************      
+      case 6: 
+    Serial.print("RPM ");
+    Serial.println("40%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg11);
+  Freq += 1;
+  delay(5);
+      break;
+
+//******If running a Non GPS board, uncomment the correct case number at the begining of the loop
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////GPS ACTIVE 
+////////add more cases to increase the ammount of control over a larger min max range.   
+//////// current ranges are 0-180 which drops the rate of assist every 30 mph 
+      case 7:
+
+ while (Serial.available() > 0){
+      gps.encode(Serial.read());
+      if (gps.speed.isUpdated()){
+      //if (gps.location.isUpdated()){
+       CheckSpeed();  }
+       
+    }
+int range = map(SpeedVal, SpeedMin, SpeedMax, 0, 6);
+switch (range) {
+    case 0:    // Max RPM
+//    Serial.print("RPM ");
+//    Serial.println("100%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg5);
+  Freq += 1;
+  delay(5);
+      break;
+//*****************************************************************************      
+    case 1:    // your hand is close to the sensor
+//    Serial.print("RPM ");
+//    Serial.println("90%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg6);
+  Freq += 1;
+  delay(5);
+      break;
+//**************************************************************************************
+    case 2:    // your hand is a few inches from the sensor
+//    Serial.print("RPM ");
+//    Serial.println("80%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg7);
+  Freq += 1;
+  delay(5);
+      break;
+//****************************************************************************************************      
+    case 3:    // your hand is nowhere near the sensor
+//    Serial.print("RPM ");
+//    Serial.println("70%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg8);
+  Freq += 1;
+  delay(5);
+      break;
+//**********************************************************************************************      
+      case 4:    
+//    Serial.print("RPM ");
+//    Serial.println("60%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg9);
+  Freq += 1;
+  delay(5);
+      break;
+//***************************************************************************************      
+      case 5:    // your hand is nowhere near the sensor
+//    Serial.print("RPM ");
+//    Serial.println("50%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg10);
+  Freq += 1;
+  delay(5);
+      break;
+//************************************************************************************************      
+      case 6:    // your hand is nowhere near the sensor
+//    Serial.print("RPM ");
+//    Serial.println("40%");
+      if(Alive == 1){
+ if (Freq == 30){
+  mcp2515.sendMessage(&canMsg1);
+ // Serial.println("Alive 1");
+  //delay(10);
+  Freq = 0;
+  Alive = 2; 
+ delay(5);
+ }
+ }
+ if(Alive == 2){
+ if (Freq == 30){
+//  Serial.println("Alive 2");
+  mcp2515.sendMessage(&canMsg2);
+  //delay(10);
+  Freq = 0;
+  Alive = 3; 
+  delay(5);
+ }
+ }
+ if(Alive == 3){
+ if (Freq == 30){
+ // Serial.println("Alive 3");
+  mcp2515.sendMessage(&canMsg3);
+  //delay(10);
+  Freq = 0;
+  Alive = 4; 
+  delay(5);
+ }
+ }
+ if(Alive == 4){
+ if (Freq == 30){
+  //Serial.println("Alive 4");
+  mcp2515.sendMessage(&canMsg4);
+  //delay(10);
+  Freq = 0;
+  Alive = 1; 
+  delay(5);
+ }
+ }
+ mcp2515.sendMessage(&canMsg11);
+  Freq += 1;
+  delay(5);
+      break;
+}  
+ break;
+ }
+  delay(1);
+  
+}
+// End loop
+
+void CheckSpeed()
+{
+ SpeedVal = gps.speed.mph();
+// Serial.print("Speed in miles/h = ");
+  //    Serial.println();
+//Serial.println(gps.speed.mph());
+delay(5); 
+     }
